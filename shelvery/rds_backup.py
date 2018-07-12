@@ -251,7 +251,7 @@ class ShelveryRDSBackup(ShelveryEngine):
             if snap['DBInstanceIdentifier'] in entities:
                 snap['EntityResource'] = entities[snap['DBInstanceIdentifier']]
 
-    def copy_shared_backups(self):
+    def do_copy_shared_backups(self):
         """Make a copy of the RDS snapshots that have been shared with this account.
         Note that a resource's tags are only visible to the account that owns it; the tags
         are therefore not accessible on shared resources.
@@ -295,13 +295,16 @@ class ShelveryRDSBackup(ShelveryEngine):
         print("Found %s shared snapshots." % (len(shared_snapshots)))
 
         for shared_snapshot in shared_snapshots:
+            # TODO: move this mess into an ARN object
             shared_snapshot_arn = shared_snapshot['DBSnapshotArn']
             shared_tokens = shared_snapshot_arn.split(':')
+            account_id = shared_tokens[4]
             shared_snapshot_name = ":".join(shared_tokens[6:])
+            shared_snapshot_name_with_account_id = shared_snapshot_name + '-' + account_id
             # Remove the account ID from the ARN
-            shared_snapshot_id = ":".join(shared_tokens[:4] + shared_tokens[5:])
+            shared_snapshot_id = ":".join(shared_tokens[:4] + shared_tokens[5:]) + '-' + account_id
 
-            # TODO: if the list is gigantic, it might be worth sorting and doing a binary search.
+            # Compare the ARNs (without the region)
             if shared_snapshot_id not in existing_snapshot_ids:
                 entity = EntityResource(
                     shared_snapshot['DBInstanceIdentifier'],
@@ -316,19 +319,20 @@ class ShelveryRDSBackup(ShelveryEngine):
                     entity_resource=entity
                 )
 
-                # Override the 'name' and 'retention type' tags to be based on the original snapshot's name.
+                # Override the 'name' and 'retention type' tags to be based on the original snapshot's name plus the account ID.
                 # This is pretty hacky and should be refactored.
                 retention_type = shared_snapshot_name.split('-')[-1]
 
                 backup_resource.tags[f"{RuntimeConfig.get_tag_prefix()}:retention_type"] = retention_type
-                backup_resource.tags[f"{RuntimeConfig.get_tag_prefix()}:name"] = shared_snapshot_name
-                backup_resource.tags['Name'] = shared_snapshot_name
+                backup_resource.tags[f"{RuntimeConfig.get_tag_prefix()}:name"] = shared_snapshot_name_with_account_id
+                backup_resource.tags['Name'] = shared_snapshot_name_with_account_id
+                backup_resource.tags[f"{RuntimeConfig.get_tag_prefix()}:account_id"] = account_id
 
                 # Construct the ARN for the target db snapshot name.
-                print("Copying shared RDS snapshot '%s' to this account..." % (shared_snapshot_name))
+                print("Copying shared RDS snapshot '%s' to this account as '%s'..." % (shared_snapshot_name, shared_snapshot_name_with_account_id))
                 copied_snapshot = rds_client.copy_db_snapshot(
                     SourceDBSnapshotIdentifier=shared_snapshot_arn,
-                    TargetDBSnapshotIdentifier=shared_snapshot_name,
+                    TargetDBSnapshotIdentifier=shared_snapshot_name_with_account_id,
                     CopyTags=False
                 )
 

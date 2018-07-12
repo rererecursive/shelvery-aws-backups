@@ -97,10 +97,11 @@ class ShelveryEngine:
             for br in backup_resources:
                 self.share_backup(br, aws_account_id)
 
-        self.copy_shared_backups()
 
-        #return backup_resources
         return []
+
+    def copy_shared_backups(self):
+        self.do_copy_shared_backups()
 
     def clean_backups(self):
         # collect backups
@@ -360,7 +361,7 @@ class ShelveryEngine:
         """
 
     @abstractmethod
-    def copy_shared_backups(self, existing_backups):
+    def do_copy_shared_backups(self, existing_backups):
         """
         Make a copy of resources that have been shared with this account.
         """
