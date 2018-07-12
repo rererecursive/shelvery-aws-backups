@@ -4,11 +4,11 @@ import json
 from shelvery.factory import ShelveryFactory
 
 def lambda_handler(event, context):
-    
-    logger = logging.getLogger()
+
+    logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
     logger.info(f"Received event\n{json.dumps(event,indent=2)}")
-    
+
     if 'backup_type' not in event:
         raise Exception("Expecting backup type in event payload in \"backup_type\" key")
 
@@ -21,12 +21,12 @@ def lambda_handler(event, context):
     # create backup engine
     backup_engine = ShelveryFactory.get_shelvery_instance(backup_type)
     backup_engine.set_lambda_environment(event, context)
-    
+
     method = backup_engine.__getattribute__(action)
-    
+
     if 'arguments' in event:
         method(event['arguments'])
     else:
         method()
-    
+
     return 0

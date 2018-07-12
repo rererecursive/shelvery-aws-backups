@@ -34,7 +34,7 @@ class ShelveryEngine:
         FORMAT = "%(asctime)s %(process)s %(thread)s: %(message)s"
         logging.basicConfig(format=FORMAT)
         logging.info("Initialize logger")
-        self.logger = logging.getLogger()
+        self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.INFO)
         self.aws_request_id = 0
         self.lambda_wait_iteration = 0
@@ -49,9 +49,11 @@ class ShelveryEngine:
             self.lambda_wait_iteration = payload['arguments'][LAMBDA_WAIT_ITERATION]
 
     def create_backups(self) -> List[BackupResource]:
+
         """Create backups from all collected entities marked for backup by using specific tag"""
 
         # collect resources to be backed up
+
         resource_type = self.get_resource_type()
         self.logger.info(f"Collecting entities of type {resource_type} tagged with "
                          f"{RuntimeConfig.get_tag_prefix()}:{self.BACKUP_RESOURCE_TAG}")
@@ -95,7 +97,10 @@ class ShelveryEngine:
             for br in backup_resources:
                 self.share_backup(br, aws_account_id)
 
-        return backup_resources
+        self.copy_shared_backups()
+
+        #return backup_resources
+        return []
 
     def clean_backups(self):
         # collect backups
@@ -352,4 +357,10 @@ class ShelveryEngine:
     def get_backup_resource(self, backup_region: str, backup_id: str) -> BackupResource:
         """
         Get Backup Resource within region, identified by its backup_id
+        """
+
+    @abstractmethod
+    def copy_shared_backups(self, existing_backups):
+        """
+        Make a copy of resources that have been shared with this account.
         """
