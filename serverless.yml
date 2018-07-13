@@ -139,6 +139,20 @@ functions:
           input:
             backup_type: ec2ami
             action: clean_backups
+      # copy shared rds
+      - schedule:
+          rate: 'cron(0 1 ? * * *)'
+          enabled: true
+          input:
+            backup_type: rds
+            action: copy_shared_backups
+      # copy shared rds cluster
+      - schedule:
+          rate: 'cron(0 1 ? * * *)'
+          enabled: true
+          input:
+            backup_type: rds_cluster
+            action: copy_shared_backups
     environment:
       shelvery_keep_daily_backups: ${env:shelvery_keep_daily_backups,'14'}
       shelvery_keep_weekly_backups: ${env:shelvery_keep_weekly_backups,'8'}
