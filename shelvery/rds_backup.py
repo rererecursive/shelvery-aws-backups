@@ -275,7 +275,8 @@ class ShelveryRDSBackup(ShelveryEngine):
 
         rds_client = boto3.client('rds')
         region = boto3.session.Session().region_name
-        shared_snapshots = rds_client.describe_db_snapshots(SnapshotType='shared', IncludeShared=True)['DBSnapshots']
+        all_shared_snapshots = rds_client.describe_db_snapshots(SnapshotType='shared', IncludeShared=True)['DBSnapshots']
+        shared_snapshots = list(filter(lambda snap: snap['Encrypted'] == False, all_shared_snapshots))
         existing_snapshots = rds_client.describe_db_snapshots()['DBSnapshots']
 
         if not len(shared_snapshots):
