@@ -21,27 +21,16 @@ class BackupResource:
     RETENTION_MONTHLY = 'monthly'
     RETENTION_YEARLY = 'yearly'
 
-    def __init__(self, tag_prefix, entity_resource: EntityResource, construct=False):
+    def __init__(self, tag_prefix, entity_resource: EntityResource, construct=False, date_created=datetime.utcnow()):
         """Construct new backup resource out of entity resource (e.g. ebs volume)."""
         # if object manually created
         if construct:
             return
 
-        self.date_created = datetime.utcnow()
+        self.date_created = date_created
+        date_formatted = date_created.strftime(self.TIMESTAMP_FORMAT)
 
-        # determine retention period
-        if self.date_created.day == 1:
-            if self.date_created.month == 1:
-                self.retention_type = self.RETENTION_YEARLY
-            else:
-                self.retention_type = self.RETENTION_MONTHLY
-        elif self.date_created.weekday() == 6:
-            self.retention_type = self.RETENTION_WEEKLY
-        else:
-            self.retention_type = self.RETENTION_DAILY
-
-        date_formatted = self.date_created.strftime(self.TIMESTAMP_FORMAT)
-
+        self.retention_type = self.determine_retention_type(date_created)
         self.name = self.determine_backup_name(date_formatted, entity_resource, self.retention_type)
 
         self.entity_id = entity_resource.resource_id
@@ -61,7 +50,7 @@ class BackupResource:
         self.backup_id = None
         self.expire_date = None
 
-    def determine_backup_name(self, date, entity, retention_type):
+    def determine_backup_name(self, date: datetime, entity: EntityResource, retention_type: str):
         """Determine the backup name. Make it meaningful (using tags) and unique (from its ID).
         If the name is more than 127 characters long, reduce it.
         """
@@ -79,7 +68,18 @@ class BackupResource:
 
         return f"{name}-{date}-{retention_type}"
 
-
+    def determine_retention_type(self, date: datetime):
+        """Determine the retention type from a date.
+        """
+        if date.day == 1:
+            if date.month == 1:
+                return self.RETENTION_YEARLY
+            else:
+                return self.RETENTION_MONTHLY
+        elif date.weekday() == 6:
+            return self.RETENTION_WEEKLY
+        else:
+            return self.RETENTION_DAILY
 
     @classmethod
     def construct(cls,
