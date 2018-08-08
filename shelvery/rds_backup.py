@@ -10,6 +10,9 @@ from botocore.errorfactory import ClientError
 
 
 class ShelveryRDSBackup(ShelveryEngine):
+    def __init__(self):
+        self.rds_client = boto3.client('rds')
+
     def is_backup_available(self, backup_region: str, backup_id: str) -> bool:
         rds_client = boto3.client('rds', region_name=backup_region)
         snapshots = rds_client.describe_db_snapshots(DBSnapshotIdentifier=backup_id)
@@ -30,6 +33,7 @@ class ShelveryRDSBackup(ShelveryEngine):
                         f"modes supported - set rds backup mode using rds_backup_mode configuration option ")
 
     def backup_from_latest_automated(self, backup_resource: BackupResource):
+
         rds_client = boto3.client('rds')
         auto_snapshots = rds_client.describe_db_snapshots(
             DBInstanceIdentifier=backup_resource.entity_id,
@@ -123,20 +127,22 @@ class ShelveryRDSBackup(ShelveryEngine):
     def get_engine_type(self) -> str:
         return 'rds'
 
-    def get_entities_to_backup(self, tag_name: str) -> List[EntityResource]:
-        # region and api client
-        local_region = boto3.session.Session().region_name
-        rds_client = boto3.client('rds')
+    def get_entities_to_backup(self, tag_name: str, resource_ids: list) -> List[EntityResource]:
+        """Find all resources marked with the backup tag.
 
-        # list of models returned from api
+        Params:
+            tag_name: the tag that resources must have
+            resource_ids: a list of resources to back up (optional)
+        """
+        local_region = boto3.session.Session().region_name
         db_entities = []
 
-        db_instances = self.get_all_instances(rds_client)
+        db_instances = self.get_rds_instances(resource_ids)
 
         # collect tags in check if instance tagged with marker tag
 
         for instance in db_instances:
-            tags = rds_client.list_tags_for_resource(ResourceName=instance['DBInstanceArn'])['TagList']
+            tags = self.rds_client.list_tags_for_resource(ResourceName=instance['DBInstanceArn'])['TagList']
 
             # convert api response to dictionary
             d_tags = dict(map(lambda t: (t['Key'], t['Value']), tags))
@@ -156,21 +162,25 @@ class ShelveryRDSBackup(ShelveryEngine):
 
         return db_entities
 
-    def get_all_instances(self, rds_client):
+    def get_rds_instances(self, resource_ids: list):
+        """Get all RDS instances, optionally restricted to certain resource IDs.
+
+        Params:
+            resource_ids: a list of instance IDs
+
+        Returns:
+            a list of instances
         """
-        Get all RDS instances within region for given boto3 client
-        :param rds_client: boto3 rds service
-        :return: all RDS instances within region for given boto3 client
-        """
-        # list of resource models
         db_instances = []
-        # temporary list of api models, as calls are batched
-        temp_instances = rds_client.describe_db_instances()
+        temp_instances = self.rds_client.describe_db_instances()
         db_instances.extend(temp_instances['DBInstances'])
         # collect database instances
         while 'Marker' in temp_instances:
-            temp_instances = rds_client.describe_db_instances(Marker=temp_instances['Marker'])
+            temp_instances = self.rds_client.describe_db_instances(Marker=temp_instances['Marker'])
             db_instances.extend(temp_instances['DBInstances'])
+
+        if resource_ids:
+            return list(filter(lambda instance: instance['DBInstanceIdentifier'] in resource_ids, db_instances))
 
         return db_instances
 

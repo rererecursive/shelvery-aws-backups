@@ -9,6 +9,7 @@ from abc import abstractclassmethod
 
 from shelvery.shelvery_invoker import ShelveryInvoker
 from shelvery.runtime_config import RuntimeConfig
+from shelvery.config import Config
 from shelvery.backup_resource import BackupResource
 from shelvery.entity_resource import EntityResource
 
@@ -22,61 +23,60 @@ class ShelveryEngine:
 
     __metaclass__ = abc.ABCMeta
 
-    DEFAULT_KEEP_DAILY = 14
-    DEFAULT_KEEP_WEEKLY = 8
-    DEFAULT_KEEP_MONTHLY = 12
-    DEFAULT_KEEP_YEARLY = 10
-
     BACKUP_RESOURCE_TAG = 'create_backup'
 
     def __init__(self):
-        # system logger
-        FORMAT = "%(asctime)s %(process)s %(thread)s: %(message)s"
-        logging.basicConfig(format=FORMAT)
-        logging.info("Initialize logger")
-        self.logger = logging.getLogger()
-        self.logger.setLevel(logging.INFO)
         self.aws_request_id = 0
         self.lambda_wait_iteration = 0
         self.lambda_payload = None
         self.lambda_context = None
 
+        self.initialise_config()
+        self.initialise_logger()
+
+    def initialise_logger(self):
+        FORMAT = "%(asctime)s %(process)s %(thread)s: %(message)s"
+        logging.basicConfig(format=FORMAT)
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.INFO)
+
+    def initialise_config(self):
+        self.config = Config()
+
     def set_lambda_environment(self, payload, context):
+        # TODO: can this be deleted?
         self.lambda_payload = payload
         self.lambda_context = context
         self.aws_request_id = context.aws_request_id
         if ('arguments' in payload) and (LAMBDA_WAIT_ITERATION in payload['arguments']):
             self.lambda_wait_iteration = payload['arguments'][LAMBDA_WAIT_ITERATION]
 
-    def create_backups(self) -> List[BackupResource]:
-        """Create backups from all collected entities marked for backup by using specific tag"""
+    def create_backups(self, args={}) -> List[BackupResource]:
+        """Create backups from all collected entities marked for backup by using specific tag.
 
-        # collect resources to be backed up
+        Params:
+            args: arguments that were specified on the command line.
+        """
+        tag_prefix = 'shelvery'
+        tag =  'shelvery:create_backup'
+
+        resource_ids = args['resource_ids'] if 'resource_ids' in args else []
         resource_type = self.get_resource_type()
-        self.logger.info(f"Collecting entities of type {resource_type} tagged with "
-                         f"{RuntimeConfig.get_tag_prefix()}:{self.BACKUP_RESOURCE_TAG}")
-        resources = self.get_entities_to_backup(f"{RuntimeConfig.get_tag_prefix()}:{self.BACKUP_RESOURCE_TAG}")
+        entities = self.get_entities_to_backup(tag, resource_ids)
 
-        # allows user to select single entity to be backed up
-        if RuntimeConfig.get_shelvery_select_entity(self) is not None:
-            entity_id = RuntimeConfig.get_shelvery_select_entity(self)
-            self.logger.info(f"Creating backups only for entity {entity_id}")
-            resources = list(
-                filter(
-                    lambda x: x.resource_id == entity_id,
-                    resources)
-            )
-
-        self.logger.info(f"{len(resources)} resources of type {resource_type} collected for backup")
+        if resource_ids:
+            self.logger.info(f"Creating backups only for resources {resource_ids}.")
+        else:
+            self.logger.info(f"Collected {len(entities)} entities of type '{resource_type}' tagged with '{tag}' for backup.")
 
         # create and collect backups
         backup_resources = []
-        for r in resources:
+        for ent in entities:
             backup_resource = BackupResource(
-                tag_prefix=RuntimeConfig.get_tag_prefix(),
-                entity_resource=r
+                tag_prefix=tag_prefix,
+                entity_resource=ent
             )
-            self.logger.info(f"Processing {resource_type} with id {r.resource_id}")
+            self.logger.info(f"Processing {resource_type} with id {ent.resource_id}")
             self.logger.info(f"Creating backup {backup_resource.name}")
             try:
                 self.backup_resource(backup_resource)
@@ -310,7 +310,7 @@ class ShelveryEngine:
         """
 
     @abstractmethod
-    def get_entities_to_backup(self, tag_name: str) -> List[EntityResource]:
+    def get_entities_to_backup(self, tag_name: str, resource_ids: list) -> List[EntityResource]:
         """
         Returns list of objects with 'date_created', 'id' and 'tags' properties
         """

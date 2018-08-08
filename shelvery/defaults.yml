@@ -1,0 +1,25 @@
+
+# This is the default configuration for backups.
+# Values can be overriden using environment variables and resource tags.
+backups:
+  daily_retention: 14
+  weekly_retention: 8
+  monthly_retention: 12
+  yearly_retention: 10
+
+  # AWS account IDs to share backed up resources with
+  share_with_account_ids:
+    - 1234567
+    - 7654321
+
+  # Additional locations to back up resources to.
+  disaster_recovery_regions:
+    - us-east-1
+    - ap-southeast-2
+
+shelvery:
+  # Seconds to wait until a backup becomes available
+  snapshot_timeout: 1200
+  lambda_max_wait_iterators: 5
+  # Run all backups in a single thread (i.e. sequentially)
+  single_thread: false

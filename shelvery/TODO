@@ -1,0 +1,38 @@
+
+[ ] Remove parameter for 'get_entities_to_backup' as it's unnecessary
+[ ] Separate the config from the code. The config can be overriden with environment variables.
+[ ] Don't query for every backup when using select_single_entity; query ONLY that entity.
+[ ] Clean up the backup_resource() class
+[ ] Add comments to every function so that we know what it's doing.
+[ ] Rename 'entity_resource' to 'existing resource' to distinguish resource types
+[ ] The RDS snapshot mode shouldn't be selected using an environment variable. It should be a flag, and a mandatory one.
+[ ] Add a dry run option to test which backups are created/which will be created
+[ ] Add a 'list' option
+[ ] Add a mechanism to ask the deployed Shelvery version
+[ ] Keep 'X' amount of backups
+[ ] Make sure that integration tests are done in an account with no resources. Provide a warning if resources exist.
+
+
+Planned Changes
+---------------
+- Remove environment variables altogether. To configure options, such as the RDS snapshot mode, use flags.
+	For example, the current command:
+		RDS_SNAPSHOT_MODE=COPY_AUTOMATED_SNAPSHOT SHELVERY_SELECT_SINGLE=rds-1234567 shelvery rds create_backups
+	shall become:
+		shelvery rds create_backups --resource-id rds-1234567
+- Add a new command to tag a backup (shelvery rds tag_resource)
+- Rename 'Entity' to 'ExistingResource', leaving the types as 'ExistingResource' and 'BackupResource'.
+- Add more logging throughout the functions, ESPECIALLY rds -> populate_snap_entity_resources()
+
+Completed Changes
+-----------------
+- Simplify the RuntimeConfig with Config. This should calculate the config into a dictionary at launch time, instead of using function getters during runtime.
+- Refactor engine.py when executing get_shelvery_select_entity(). Instead of querying every resource and filtering, include the filter in the initial query. Also, move the logging to be inside the function, instead of outside.
+
+
+Questions
+---------
+Why are there two RDS modes? If an instance is tagged with shelvery, create a backup. If an automated instance is tagged as well, create the backup.
+
+
+If your cluster runs across multiple cloud providers, you need to schedule backups across all database volumes.

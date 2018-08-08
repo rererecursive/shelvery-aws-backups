@@ -6,6 +6,7 @@ import boto3
 import os
 import time
 import botocore
+import warnings
 from datetime import datetime
 
 pwd = os.path.dirname(os.path.abspath(__file__))
@@ -38,14 +39,16 @@ class ShelveryEBSIntegrationTestCase(unittest.TestCase):
             'us-west-2': []
         }
 
-        print(f"Setting up ebs integraion test")
+        warnings.simplefilter("ignore", ResourceWarning)
+
+        print(f"Setting up ebs integration test")
         print("Create EBS Volume of 1G")
         os.environ['AWS_DEFAULT_REGION'] = 'us-east-1'
         os.environ['SHELVERY_MONO_THREAD'] = '1'
         ec2client = boto3.client('ec2')
         sts = boto3.client('sts')
-        self.id = sts.get_caller_identity()
-        print(f"Running as user:\n{self.id}\n")
+        self.caller = sts.get_caller_identity()
+        print(f"Running as user: {self.caller['UserId']} / {self.caller['Arn']}\n\n")
         self.volume = ec2client.create_volume(AvailabilityZone='us-east-1a',
                                               Encrypted=False,
                                               Size=1,
@@ -66,7 +69,7 @@ class ShelveryEBSIntegrationTestCase(unittest.TestCase):
 
         print(f"Created volume: {self.volume}")
         # TODO wait until volume is 'available'
-        self.share_with_id = int(self.id['Account']) + 1
+        self.share_with_id = int(self.caller['Account']) + 1
         os.environ['shelvery_select_entity'] = self.volume['VolumeId']
 
     def tearDown(self):
@@ -120,7 +123,10 @@ class ShelveryEBSIntegrationTestCase(unittest.TestCase):
 
         self.assertTrue(valid)
 
-    def test_ShareBackups(self):
+    # TODO:
+    # test for a single back up.
+
+    def _test_ShareBackups(self):
         ebs_backups_engine = ShelveryEBSBackup()
         try:
             os.environ["shelvery_share_aws_account_ids"] = str(self.share_with_id)
@@ -150,7 +156,7 @@ class ShelveryEBSIntegrationTestCase(unittest.TestCase):
 
         self.assertTrue(valid)
 
-    def test_CopyBackups(self):
+    def _test_CopyBackups(self):
         ebs_backups_engine = ShelveryEBSBackup()
         try:
             os.environ['shelvery_dr_regions'] = 'us-west-2'
@@ -198,7 +204,7 @@ class ShelveryEBSIntegrationTestCase(unittest.TestCase):
 
         self.assertTrue(valid)
 
-    def test_CleanBackups(self):
+    def _test_CleanBackups(self):
         ebs_backups_engine = ShelveryEBSBackup()
         try:
             backups = ebs_backups_engine.create_backups()

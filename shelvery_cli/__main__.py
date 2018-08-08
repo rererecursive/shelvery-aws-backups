@@ -1,11 +1,11 @@
 import shelvery
-from shelvery_cli.shelver_cli_main import ShelveryCliMain
+from shelvery_cli.shelvery_cli_main import ShelveryCliMain
 import logging
 import sys
 
 
 def setup_logging():
-    root = logging.getLogger()
+    root = logging.getLogger(__name__)
     root.setLevel(logging.DEBUG)
 
     ch = logging.StreamHandler(sys.stdout)
