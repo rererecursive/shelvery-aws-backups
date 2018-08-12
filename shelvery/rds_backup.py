@@ -10,6 +10,9 @@ from botocore.errorfactory import ClientError
 
 
 class ShelveryRDSBackup(ShelveryEngine):
+    def __init__(self):
+        self.rds_client = boto3.client('rds')
+
     def is_backup_available(self, backup_region: str, backup_id: str) -> bool:
         rds_client = boto3.client('rds', region_name=backup_region)
         snapshots = rds_client.describe_db_snapshots(DBSnapshotIdentifier=backup_id)
@@ -222,18 +225,24 @@ class ShelveryRDSBackup(ShelveryEngine):
         return all_snapshots
 
     def populate_snap_entity_resource(self, all_snapshots):
+        """Construct an EntityResource that represent the RDS instances
+        for each shelvery snapshot, and add it to the snapshot
+        object.
+
+        Params:
+            all_snapshots: a list of snapshots returned from the AWS API.
+        """
         instance_ids = []
         for snap in all_snapshots:
             if snap['DBInstanceIdentifier'] not in instance_ids:
                 instance_ids.append(snap['DBInstanceIdentifier'])
         entities = {}
-        rds_client = boto3.client('rds')
         local_region = boto3.session.Session().region_name
 
         for instance_id in instance_ids:
             try:
-                rds_instance = rds_client.describe_db_instances(DBInstanceIdentifier=instance_id)['DBInstances'][0]
-                tags = rds_client.list_tags_for_resource(ResourceName=rds_instance['DBInstanceArn'])['TagList']
+                rds_instance = self.rds_client.describe_db_instances(DBInstanceIdentifier=instance_id)['DBInstances'][0]
+                tags = self.rds_client.list_tags_for_resource(ResourceName=rds_instance['DBInstanceArn'])['TagList']
                 d_tags = dict(map(lambda t: (t['Key'], t['Value']), tags))
                 rds_entity = EntityResource(instance_id,
                                             local_region,
@@ -251,100 +260,33 @@ class ShelveryRDSBackup(ShelveryEngine):
             if snap['DBInstanceIdentifier'] in entities:
                 snap['EntityResource'] = entities[snap['DBInstanceIdentifier']]
 
-    def do_copy_shared_backups(self):
-        """Make a copy of the RDS snapshots that have been shared with this account.
-        Note that a resource's tags are only visible to the account that owns it; the tags
-        are therefore not accessible on shared resources.
-
-        # TODO: do we want to copy them to the DR regions as well?
-        # TODO: do we want to share the copies with other accounts once created?
-        # TODO: append the account ID on the end of the snapshot
-        # TODO: parse the ARN into an object
-
-        Problems:
-            - if a snapshot with the same name is shared by prod AND dev, one will be ignored.
-            Solution:
-            - append the account's ID on the snapshot name
-
-            - the 'shelvery:name' tag uses the snapshot's create time instead of the snapshot's name.
-            Solution:
-            - parse the snapshot's date and add this to the 'shelvery:name' tag.
+    def get_existing_backups_without_entities(self):
+        """Return a list of snapshots without populating them with EntityResources.
+        This is just a generic function for querying backups.
         """
-        copied = 0
-        ignored = 0
+        return self.rds_client.describe_db_snapshots()['DBSnapshots']
 
-        rds_client = boto3.client('rds')
-        region = boto3.session.Session().region_name
-        all_shared_snapshots = rds_client.describe_db_snapshots(SnapshotType='shared', IncludeShared=True)['DBSnapshots']
-        shared_snapshots = list(filter(lambda snap: snap['Encrypted'] == False, all_shared_snapshots))
-        existing_snapshots = rds_client.describe_db_snapshots()['DBSnapshots']
+    def get_unique_backup_identifier(self):
+        """An object key that uniquely identifies a snapshot.
+        """
+        return 'DBSnapshotIdentifier'
 
-        if not len(shared_snapshots):
-            print("No shared RDS snapshots were found.")
-            return
+    def get_arn_backup_identifier(self):
+        return 'DBSnapshotArn'
 
-        # Get a list of snapshot
-        existing_snapshot_ids = []
-        for snap in existing_snapshots:
-            tokens = snap['DBSnapshotArn'].split(':')
-            # Remove the account ID from the ARN
-            snapshot_id = ":".join(tokens[:4] + tokens[5:])
-            existing_snapshot_ids.append(snapshot_id)
+    def get_unique_instance_identifier(self):
+        """An object key that uniquely identifiers a DB instance.
+        """
+        return 'DBInstanceIdentifier'
 
-        # To compare the snapshots, compare the ARNS without the IDs.
+    def copy_backup_resource(self, source_identifier, target_identifier):
+        copied_snapshot = self.rds_client.copy_db_snapshot(
+            SourceDBSnapshotIdentifier=source_identifier,
+            TargetDBSnapshotIdentifier=target_identifier,
+            CopyTags=False
+        )
+        return copied_snapshot['DBSnapshot']
 
-        print("Found %s shared snapshots." % (len(shared_snapshots)))
-
-        for shared_snapshot in shared_snapshots:
-            # TODO: move this mess into an ARN object
-            shared_snapshot_arn = shared_snapshot['DBSnapshotArn']
-            shared_tokens = shared_snapshot_arn.split(':')
-            account_id = shared_tokens[4]
-            shared_snapshot_name = ":".join(shared_tokens[6:])
-            shared_snapshot_name_with_account_id = shared_snapshot_name + '-' + account_id
-            # Remove the account ID from the ARN
-            shared_snapshot_id = ":".join(shared_tokens[:4] + shared_tokens[5:]) + '-' + account_id
-
-            # Compare the ARNs (without the region)
-            if shared_snapshot_id not in existing_snapshot_ids:
-                entity = EntityResource(
-                    shared_snapshot['DBInstanceIdentifier'],
-                    region,
-                    shared_snapshot['SnapshotCreateTime'],
-                    {}
-                )
-
-                # Add the tags to the resource
-                backup_resource = BackupResource(
-                    tag_prefix=RuntimeConfig.get_tag_prefix(),
-                    entity_resource=entity
-                )
-
-                # Override the 'name' and 'retention type' tags to be based on the original snapshot's name plus the account ID.
-                # This is pretty hacky and should be refactored.
-                retention_type = shared_snapshot_name.split('-')[-1]
-
-                backup_resource.tags[f"{RuntimeConfig.get_tag_prefix()}:retention_type"] = retention_type
-                backup_resource.tags[f"{RuntimeConfig.get_tag_prefix()}:name"] = shared_snapshot_name_with_account_id
-                backup_resource.tags['Name'] = shared_snapshot_name_with_account_id
-                backup_resource.tags[f"{RuntimeConfig.get_tag_prefix()}:account_id"] = account_id
-
-                # Construct the ARN for the target db snapshot name.
-                print("Copying shared RDS snapshot '%s' to this account as '%s'..." % (shared_snapshot_name, shared_snapshot_name_with_account_id))
-                copied_snapshot = rds_client.copy_db_snapshot(
-                    SourceDBSnapshotIdentifier=shared_snapshot_arn,
-                    TargetDBSnapshotIdentifier=shared_snapshot_name_with_account_id,
-                    CopyTags=False
-                )
-
-                copied_snapshot_arn = copied_snapshot['DBSnapshot']['DBSnapshotArn']
-                rds_client.add_tags_to_resource(
-                    ResourceName=copied_snapshot_arn,
-                    Tags=list(map(lambda k: {'Key': k, 'Value': backup_resource.tags[k].replace(',', ' ')}, backup_resource.tags))
-                )
-
-                copied += 1
-            else:
-                ignored += 1
-
-        print("Copied %d. Ignored %d." % (copied, ignored))
+    def get_shared_backups(self):
+        # TODO: only copy over 'shelvery' backups (by first querying the tags from S3)
+        return self.rds_client.describe_db_snapshots(SnapshotType='shared', IncludeShared=True)['DBSnapshots']

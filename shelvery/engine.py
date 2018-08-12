@@ -2,6 +2,7 @@ import abc
 import logging
 import time
 import sys
+import boto3
 
 from typing import List, Dict
 from abc import abstractmethod
@@ -101,7 +102,98 @@ class ShelveryEngine:
         return []
 
     def copy_shared_backups(self):
-        self.do_copy_shared_backups()
+        """
+        Copy a backup that was shared with this account into this account.
+
+        Ideally we'd use the source ARN for the copied resource name, but AWS
+        prevents colons in the name. Therefore, our naming convention for
+        copied resources will have to be:
+            <source resource ID>-<source account ID>
+
+        This also helps us avoid naming conflicts when two accounts have a
+        resource with the same name.
+
+        For resources that are shared, its identifier (name) is set as its ARN.
+        This means that when naming the copied snapshot, we need to extract
+        the original source name from the ARN and append the source account ID.
+        """
+        shared_backups = self.get_shared_backups()
+
+        if not len(shared_backups):
+            print("No shared backups were found.")
+            return
+
+        existing_backups = self.get_existing_backups_without_entities()
+        instance_identifier = self.get_unique_instance_identifier()
+        backup_identifier = self.get_unique_backup_identifier()
+        backup_arn = self.get_arn_backup_identifier()
+
+        '''
+        To check if we've already copied the snapshot, we can
+        reconstruct the source ARN by removing the appended account ID,
+        replacing the account ID of the ARN in the existing backup with the
+        source account ID, and then comparing it with the shared snapshot ARN.
+        '''
+        existing_backup_ids = [resource[backup_identifier] for resource in existing_backups]
+
+        for shared_backup in shared_backups:
+            shared_arn = shared_backup[backup_arn]
+
+            for backup in existing_backups:
+                # Try to match the source ARN by transforming the existing backup name
+                identifier = backup[backup_arn]    # an ARN
+                tokens = identifier.split('-')
+                account_id = tokens[-1]
+
+                identifier = "-".join(tokens[:-1]) # Strip the account ID
+                tokens = identifier.split(':')
+                new_arn = ":".join(tokens[:4] + [account_id] + tokens[5:])   # Replace the account ID
+
+                if shared_arn == new_arn:
+                    print ("Backup '%s' is already copied. Skipping..." % shared_arn)
+                    break
+            else:
+                # The backup hasn't been copied.
+                # Get the backup name from the source ARN.
+                tokens = shared_arn.split(':')
+                account_id = tokens[4]
+                identifier = tokens[-1]
+                name = identifier + '-' + account_id
+
+                copied_resource = self.copy_backup_resource(source_identifier=shared_arn, target_identifier=name)
+                print("Copied shared resource '%s' to this account as '%s'." % (shared_arn, name))
+                identifier = copied_resource[backup_identifier]
+
+                retention_type = shared_arn.split('-')[-1]
+                backup_resource = BackupResource(None, None, True)
+                backup_resource.backup_id = identifier
+                backup_resource.tags = {}
+
+                # TODO: add another tag to indicate that it was copied from another account.
+                # TODO: write a function in rds_backup that creates a 'copied backup resource'
+                backup_resource.tags['Name'] = shared_arn
+                backup_resource.tags[f"{RuntimeConfig.get_tag_prefix()}:name"] = shared_arn
+                backup_resource.tags[f"{RuntimeConfig.get_tag_prefix()}:entity_id"] = shared_backup[instance_identifier]
+                backup_resource.tags[f"{RuntimeConfig.get_tag_prefix()}:retention_type"] = retention_type
+                backup_resource.tags[f"{RuntimeConfig.get_tag_prefix()}:region"] = boto3.session.Session().region_name
+
+                self.tag_backup_resource(backup_resource)
+                print("Tagged resource '%s'." % (name))
+
+            '''
+            TODO: copy the source's original tags from S3 to this backup
+            When pulling down the metadata from S3, check which of the snapshots are created by shelvery, and which
+            ones should be copied. Only copy over shelvery-created resources.
+            This also means that we don't have to check the shared resource's name for the retention type, and can instead
+            use the tags, which is more accurate.
+
+            Problem:
+                - if a backup has already been copied over, and is deleted and created with the same name in
+                the source account, the new backup won't be recreated
+            Solution:
+                - store the sourcecreatedatetime on the source snapshot in the dest tags, and compare them
+            '''
+        #self.do_copy_shared_backups()
 
     def clean_backups(self):
         # collect backups
